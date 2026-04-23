@@ -128,6 +128,45 @@ git fetch --all
 git checkout yunyi_feature
 ```
 
+### 5.2.1 获取 GitHub Token（用于 Copilot 渠道）
+`GitHubCopilot` 渠道的 `API Key` 位置需要填写一个 GitHub Token。推荐使用 PAT（`ghp_` 或 `github_pat_`）。
+
+#### A. 在 GitHub 网页创建 PAT（推荐）
+1. 登录 GitHub 账号（该账号需要有有效 Copilot 订阅）。
+2. 进入右上角头像 -> `Settings`。
+3. 左侧进入 `Developer settings`。
+4. 进入 `Personal access tokens`：
+   - 推荐：`Fine-grained tokens`
+   - 兼容：`Tokens (classic)`
+5. 点击 `Generate new token`，设置：
+   - **Expiration**：建议先设 30 天或 90 天（测试期足够）
+   - **Repository access**：可选最小权限（一般无需 repo 写权限）
+   - **Scopes/Permissions**：本方案主要用于调用 `copilot_internal/v2/token`，测试场景通常不需要额外高危权限
+6. 生成后**立即复制并保存**（离开页面后无法再次查看明文）。
+
+> 安全提示：Token 只用于测试环境，禁止发群、禁止贴工单明文。建议用密码管理器临时保存。
+
+#### B. 使用 GitHub CLI 获取（备选）
+如果本机已登录 `gh`，可直接查看当前 token：
+
+```bash
+gh auth token
+```
+
+输出通常是 `gho_` 前缀，也可用于渠道测试。
+
+#### C. 校验 Token 是否可用（建议执行）
+```bash
+curl -i https://api.github.com/copilot_internal/v2/token \
+  -H "Authorization: Bearer <YOUR_GITHUB_TOKEN>" \
+  -H "Accept: application/json"
+```
+
+期望：
+- `200`：可用，响应体包含 `token`、`expires_at`、`refresh_in`
+- `401`：token 无效或过期
+- `403`：账号无 Copilot 订阅或权限不足
+
 ### 5.3 准备 `.env`（最小可跑配置）
 在项目根目录创建 `.env` 文件（若已有则按需修改）：
 
@@ -239,7 +278,7 @@ SELECT tablename FROM pg_tables WHERE tablename IN ('tenants','seat_bindings','b
 
 ### 5.10 测试前最小准备清单（建议按顺序）
 1. 登录后台 -> 创建/确认一个用户 token（`sk-...`）
-2. 渠道管理 -> 新增 `GitHubCopilot` 渠道（填写 GitHub token）
+2. 渠道管理 -> 新增 `GitHubCopilot` 渠道（填写 GitHub token，来源见 5.2.1）
 3. 使用管理员接口绑定 Seat（或在 UI 对应入口）：
    - `tenant_id`
    - `user_id`
