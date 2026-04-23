@@ -108,7 +108,165 @@
 
 ---
 
-## 5. 人工测试用例
+## 5. 从分支代码本地启动与建表（详细实操）
+
+本节是给测试同学“一步步照抄”的启动手册，默认 macOS/Linux Shell。  
+如果你已经由研发启动好环境，可跳到第 6 节执行用例。
+
+### 5.1 前置软件版本
+- Git >= 2.30
+- Go = 1.25.x（`go.mod` 当前为 1.25.1）
+- Node.js >= 18（用于构建前端静态资源）
+- bun（推荐）或 npm（可替代）
+- Docker（可选，用于快速起 Redis）
+
+### 5.2 拉取代码并切到测试分支
+```bash
+git clone https://github.com/FeifanTech/feifan-new-api.git
+cd feifan-new-api
+git fetch --all
+git checkout yunyi_feature
+```
+
+### 5.3 准备 `.env`（最小可跑配置）
+在项目根目录创建 `.env` 文件（若已有则按需修改）：
+
+```bash
+cat > .env <<'EOF'
+PORT=3000
+GIN_MODE=debug
+
+# 1) 最简单：SQLite（本地文件）
+SQLITE_PATH=./data/new-api.db
+
+# 2) 如需 MySQL/PostgreSQL 联调，改用 SQL_DSN，示例：
+# SQL_DSN=root:123456@tcp(127.0.0.1:3306)/new-api?parseTime=true
+# SQL_DSN=postgresql://root:123456@127.0.0.1:5432/new-api
+
+# Redis（建议开启，便于验证缓存和限流）
+REDIS_CONN_STRING=redis://:123456@127.0.0.1:6379/0
+
+# 必填：seat token 加解密依赖
+CRYPTO_SECRET=change_me_to_a_long_random_string
+
+# 可选：便于区分节点
+NODE_NAME=local-test-node
+EOF
+```
+
+### 5.4 准备目录与依赖
+```bash
+mkdir -p data logs
+go mod download
+```
+
+### 5.5 启动 Redis（建议）
+方式 A：本机已有 Redis，确保密码/连接串匹配即可。  
+方式 B：Docker 一键启动：
+
+```bash
+docker run -d --name newapi-redis -p 6379:6379 redis:7 redis-server --requirepass 123456
+```
+
+验证 Redis 可用：
+```bash
+redis-cli -h 127.0.0.1 -p 6379 -a 123456 ping
+# 预期：PONG
+```
+
+### 5.6 构建前端静态资源（必须）
+`main.go` 使用 `go:embed web/dist`，所以本地运行前必须先产出 `web/dist`。
+
+```bash
+cd web
+bun install
+bun run build
+
+# 若 bun 不可用，可替代：
+# npm install --legacy-peer-deps
+# npm run build
+cd ..
+```
+
+验证产物：
+```bash
+ls web/dist
+```
+
+### 5.7 启动后端（本地源码）
+```bash
+go run main.go
+```
+
+启动成功标志：
+- 控制台出现服务启动日志
+- 可访问 `http://localhost:3000`
+
+### 5.8 建表与迁移说明（重点）
+- 本项目启动时会自动执行 `model.InitDB()` -> `migrateDB()` -> `AutoMigrate(...)`。
+- 不需要手工执行 SQL 建表脚本。
+- 本次新增的关键表会在启动时自动创建：
+  - `tenants`
+  - `seat_bindings`
+  - `billing_events`
+  - `audit_events`
+
+#### 5.8.1 如何确认表已创建（SQLite）
+```bash
+sqlite3 ./data/new-api.db ".tables"
+```
+预期至少包含：`tenants`、`seat_bindings`、`billing_events`、`audit_events`。
+
+#### 5.8.2 如何确认表已创建（MySQL）
+```sql
+SHOW TABLES LIKE 'tenants';
+SHOW TABLES LIKE 'seat_bindings';
+SHOW TABLES LIKE 'billing_events';
+SHOW TABLES LIKE 'audit_events';
+```
+
+#### 5.8.3 如何确认表已创建（PostgreSQL）
+```sql
+\dt
+-- 或
+SELECT tablename FROM pg_tables WHERE tablename IN ('tenants','seat_bindings','billing_events','audit_events');
+```
+
+### 5.9 首次初始化管理员账号
+服务首次启动后，浏览器打开 `http://localhost:3000`，按引导完成初始化：
+- 设置 root 用户名和密码（密码 >= 8）
+- 完成后可登录管理后台
+
+### 5.10 测试前最小准备清单（建议按顺序）
+1. 登录后台 -> 创建/确认一个用户 token（`sk-...`）
+2. 渠道管理 -> 新增 `GitHubCopilot` 渠道（填写 GitHub token）
+3. 使用管理员接口绑定 Seat（或在 UI 对应入口）：
+   - `tenant_id`
+   - `user_id`
+   - `seat_id`
+   - `github_token`
+4. 调用业务接口时带请求头：
+   - `Authorization: Bearer sk-...`
+   - `X-Tenant-Id: tenant-a`
+   - `X-User-Id: u-a1`
+
+### 5.11 常见启动失败排查
+
+**问题 1：`web/dist` 不存在，go run 报错**
+- 处理：先执行第 5.6 节前端构建。
+
+**问题 2：数据库连接失败**
+- 处理：检查 `.env` 的 `SQL_DSN`/`SQLITE_PATH` 是否正确，或改回 SQLite 最小方案。
+
+**问题 3：Redis 连接失败**
+- 处理：确认 Redis 已启动且密码一致；若暂不测 Redis 场景，可注释 `REDIS_CONN_STRING`，先跑基础能力。
+
+**问题 4：Seat 解密失败**
+- 处理：确认 `CRYPTO_SECRET` 已设置，且测试期间不要频繁变更该值。
+
+---
+
+## 6. 人工测试用例
 
 以下每条都建议记录：请求参数、响应体、日志截图、数据库核对结果。
 
@@ -244,7 +402,7 @@
 
 ---
 
-## 6. 回归重点（高风险）
+## 7. 回归重点（高风险）
 
 - `/v1/messages` 流式场景：长文本 + tool call + image 组合。
 - Redis 抖动时限流行为是否稳定，是否有误伤。
@@ -253,7 +411,7 @@
 
 ---
 
-## 7. 缺陷提交流程建议
+## 8. 缺陷提交流程建议
 
 缺陷单建议字段：
 - 用例编号（如 A-03）
@@ -265,7 +423,7 @@
 
 ---
 
-## 8. 测试退出标准（建议）
+## 9. 测试退出标准（建议）
 
 - P0/P1 缺陷全部关闭。
 - 所有 In Scope 用例执行完成且通过率 >= 95%。
