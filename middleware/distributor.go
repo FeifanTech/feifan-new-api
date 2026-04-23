@@ -16,6 +16,7 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/service"
+	seatservice "github.com/QuantumNous/new-api/service/seat"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/QuantumNous/new-api/types"
 
@@ -381,6 +382,17 @@ func SetupContextForSelectedChannel(c *gin.Context, channel *model.Channel, mode
 	// c.Request.Header.Set("Authorization", fmt.Sprintf("Bearer %s", key))
 	common.SetContextKey(c, constant.ContextKeyChannelKey, key)
 	common.SetContextKey(c, constant.ContextKeyChannelBaseUrl, channel.GetBaseURL())
+
+	if channel.Type == constant.ChannelTypeCopilot {
+		tenantID := c.GetHeader("X-Tenant-Id")
+		githubToken, binding, err := seatservice.ResolveGitHubToken(tenantID, c.GetInt("id"))
+		if err != nil {
+			return types.NewErrorWithStatusCode(err, types.ErrorCodeGetChannelFailed, http.StatusForbidden, types.ErrOptionWithSkipRetry())
+		}
+		common.SetContextKey(c, constant.ContextKeyChannelKey, githubToken)
+		c.Set("seat_id", binding.SeatID)
+		c.Set("tenant_id", binding.TenantID)
+	}
 
 	common.SetContextKey(c, constant.ContextKeySystemPromptOverride, false)
 

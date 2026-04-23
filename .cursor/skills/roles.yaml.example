@@ -1,0 +1,19 @@
+# 角色与 Skills 的配置化串联（用于 CLI/脚本生成 prompt）
+# 使用方式：脚本按 role 选择，再按 skills 顺序读取各 SKILL.md 拼接为 system prompt
+roles:
+  product-designer:
+    description: "产品设计：PRD、需求评审、功能设计"
+    skills:
+      - product-design-principles
+      - role-product-designer
+  architect:
+    description: "架构设计：技术方案、选型、接口设计"
+    skills:
+      - architecture-principles
+      - role-architect
+  developer:
+    description: "开发与 Code Review"
+    skills:
+      - development-principles
+      - code-standards
+      - role-developer

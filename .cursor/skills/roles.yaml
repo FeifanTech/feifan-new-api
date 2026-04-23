@@ -1,0 +1,21 @@
+# 正式版角色配置。
+# 优先供 scripts/build-role-prompt.sh 与业务仓复制使用；
+# 若业务仓需要极简或定制顺序，可在此文件基础上调整。
+roles:
+  product-designer:
+    description: "产品设计：PRD、需求评审、功能设计"
+    skills:
+      - product-design-principles
+      - role-product-designer
+  architect:
+    description: "架构设计：技术方案、选型、接口设计"
+    skills:
+      - architecture-principles
+      - role-architect
+  developer:
+    description: "开发与 Code Review"
+    skills:
+      - development-principles
+      - code-standards
+      - role-developer
+

@@ -1,0 +1,58 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: copilot-gateway-alerts
+  namespace: new-api
+spec:
+  groups:
+    - name: copilot-gateway-slo
+      rules:
+        - alert: CopilotGatewayHigh403Rate
+          expr: |
+            (
+              sum(rate(http_requests_total{channel="copilot",status_code="403"}[5m]))
+              /
+              clamp_min(sum(rate(http_requests_total{channel="copilot"}[5m])), 1)
+            ) > 0.03
+          for: 10m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Copilot 403 ratio above 3%"
+            description: "403 ratio has exceeded 3% for 10 minutes."
+
+        - alert: CopilotGatewayHigh429Rate
+          expr: |
+            (
+              sum(rate(http_requests_total{channel="copilot",status_code="429"}[5m]))
+              /
+              clamp_min(sum(rate(http_requests_total{channel="copilot"}[5m])), 1)
+            ) > 0.05
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Copilot 429 ratio above 5%"
+            description: "429 ratio has exceeded 5% for 10 minutes."
+
+        - alert: CopilotGatewayP95TooHigh
+          expr: |
+            histogram_quantile(
+              0.95,
+              sum by (le) (rate(http_request_duration_seconds_bucket{channel="copilot"}[5m]))
+            ) > 1.5
+          for: 10m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Copilot p95 latency above 1.5s"
+            description: "p95 latency is above 1.5 seconds for 10 minutes."
+
+        - alert: CopilotGatewayFallbackActive
+          expr: sum(increase(copilot_rate_limit_fallback_total[5m])) > 0
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Copilot rate limit fallback is active"
+            description: "Redis fallback path has been used in the last 5 minutes."

@@ -1,10 +1,12 @@
 package claude
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"path/filepath"
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
@@ -41,6 +43,38 @@ func maybeMarkClaudeRefusal(c *gin.Context, stopReason string) {
 	}
 	if strings.EqualFold(stopReason, "refusal") {
 		common.SetContextKey(c, constant.ContextKeyAdminRejectReason, "claude_stop_reason=refusal")
+	}
+}
+
+func convertClaudeFileMediaMessage(mediaMessage dto.MediaContent) (*dto.ClaudeMediaMessage, error) {
+	file := mediaMessage.GetFile()
+	if file == nil || file.FileData == "" {
+		return nil, nil
+	}
+	ext := strings.ToLower(filepath.Ext(file.FileName))
+	switch ext {
+	case ".pdf":
+		return &dto.ClaudeMediaMessage{
+			Type: "document",
+			Source: &dto.ClaudeMessageSource{
+				Type:      "base64",
+				MediaType: "application/pdf",
+				Data:      file.FileData,
+			},
+		}, nil
+	case ".txt", ".md", ".csv", ".json", ".log":
+		decoded, err := base64.StdEncoding.DecodeString(file.FileData)
+		if err != nil {
+			return nil, nil
+		}
+		text := string(decoded)
+		return &dto.ClaudeMediaMessage{
+			Type: "text",
+			Text: common.GetPointer(text),
+		}, nil
+	default:
+		// Ignore unsupported file types instead of coercing to image.
+		return nil, nil
 	}
 }
 
@@ -375,6 +409,14 @@ func RequestOpenAI2ClaudeMessage(c *gin.Context, textRequest dto.GeneralOpenAIRe
 								Type: "text",
 								Text: common.GetPointer[string](mediaMessage.Text),
 							})
+						}
+					case dto.ContentTypeFile:
+						fileMedia, err := convertClaudeFileMediaMessage(mediaMessage)
+						if err != nil {
+							return nil, err
+						}
+						if fileMedia != nil {
+							claudeMediaMessages = append(claudeMediaMessages, *fileMedia)
 						}
 					default:
 						source := mediaMessage.ToFileSource()
