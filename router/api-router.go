@@ -250,6 +250,18 @@ func SetApiRouter(router *gin.Engine) {
 			channelRoute.POST("/upstream_updates/detect", controller.DetectChannelUpstreamModelUpdates)
 			channelRoute.POST("/upstream_updates/detect_all", controller.DetectAllChannelUpstreamModelUpdates)
 		}
+		opsRoute := apiRouter.Group("/ops")
+		opsRoute.Use(middleware.AdminAuth())
+		{
+			opsRoute.POST("/seat/bind", controller.AdminBindSeat)
+			opsRoute.GET("/seat/bindings", controller.AdminListSeatBindings)
+			opsRoute.GET("/billing/statements", controller.AdminGetBillingStatements)
+			opsRoute.GET("/billing/statements/export", controller.AdminExportBillingStatementsCSV)
+			opsRoute.GET("/audit/events", controller.AdminListAuditEvents)
+			opsRoute.DELETE("/audit/events", controller.AdminCleanupAuditEvents)
+			opsRoute.GET("/copilot/token-health", controller.AdminCopilotTokenHealth)
+			opsRoute.GET("/overview", controller.AdminOperationsOverview)
+		}
 		tokenRoute := apiRouter.Group("/token")
 		tokenRoute.Use(middleware.UserAuth())
 		{

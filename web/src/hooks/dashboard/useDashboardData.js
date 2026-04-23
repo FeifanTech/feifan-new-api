@@ -60,6 +60,7 @@ export const useDashboardData = (userState, userDispatch, statusState) => {
   const [pieData, setPieData] = useState([{ type: 'null', value: '0' }]);
   const [lineData, setLineData] = useState([]);
   const [modelColors, setModelColors] = useState({});
+  const [opsOverview, setOpsOverview] = useState(null);
 
   // ========== 图表状态 ==========
   const [activeChartTab, setActiveChartTab] = useState('1');
@@ -234,6 +235,21 @@ export const useDashboardData = (userState, userDispatch, statusState) => {
     }
   }, [inputs, isAdminUser]);
 
+  const loadOpsOverview = useCallback(async () => {
+    if (!isAdminUser) return null;
+    try {
+      const res = await API.get('/api/ops/overview');
+      const { success, data } = res.data;
+      if (success) {
+        setOpsOverview(data);
+        return data;
+      }
+    } catch (err) {
+      console.error(err);
+    }
+    return null;
+  }, [isAdminUser]);
+
   const getUserData = useCallback(async () => {
     let res = await API.get(`/api/user/self`);
     const { success, message, data } = res.data;
@@ -247,8 +263,9 @@ export const useDashboardData = (userState, userDispatch, statusState) => {
   const refresh = useCallback(async () => {
     const data = await loadQuotaData();
     await loadUptimeData();
+    await loadOpsOverview();
     return data;
-  }, [loadQuotaData, loadUptimeData]);
+  }, [loadQuotaData, loadUptimeData, loadOpsOverview]);
 
   const handleSearchConfirm = useCallback(
     async (updateChartDataCallback) => {
@@ -300,6 +317,7 @@ export const useDashboardData = (userState, userDispatch, statusState) => {
     setLineData,
     modelColors,
     setModelColors,
+    opsOverview,
 
     // 图表状态
     activeChartTab,
@@ -334,6 +352,7 @@ export const useDashboardData = (userState, userDispatch, statusState) => {
     loadQuotaData,
     loadUserQuotaData,
     loadUptimeData,
+    loadOpsOverview,
     getUserData,
     refresh,
     handleSearchConfirm,

@@ -397,6 +397,14 @@ func TokenAuth() func(c *gin.Context) {
 			userGroup = tokenGroup
 		}
 		common.SetContextKey(c, constant.ContextKeyUsingGroup, userGroup)
+		tenantID := strings.TrimSpace(c.GetHeader("X-Tenant-Id"))
+		if tenantID != "" {
+			common.SetContextKey(c, constant.ContextKeyTenantID, tenantID)
+		}
+		externalUserID := strings.TrimSpace(c.GetHeader("X-User-Id"))
+		if externalUserID != "" {
+			common.SetContextKey(c, constant.ContextKeyExternalUserID, externalUserID)
+		}
 
 		err = SetupContextForToken(c, token, parts...)
 		if err != nil {

@@ -488,6 +488,18 @@ func validateChannel(channel *model.Channel, isAdd bool) error {
 			}
 		}
 	}
+	if channel.Type == constant.ChannelTypeGitHubCopilot {
+		trimmedKey := strings.TrimSpace(channel.Key)
+		if isAdd || trimmedKey != "" {
+			validPrefix := strings.HasPrefix(trimmedKey, "ghp_") ||
+				strings.HasPrefix(trimmedKey, "ghu_") ||
+				strings.HasPrefix(trimmedKey, "gho_") ||
+				strings.HasPrefix(trimmedKey, "github_pat_")
+			if !validPrefix {
+				return fmt.Errorf("GitHub Copilot key must be a GitHub token (ghp_/ghu_/gho_/github_pat_)")
+			}
+		}
+	}
 
 	return nil
 }

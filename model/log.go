@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/types"
 
@@ -184,6 +185,7 @@ func RecordErrorLog(c *gin.Context, userId int, channelId int, modelName string,
 	if err != nil {
 		logger.LogError(c, "failed to record log: "+err.Error())
 	}
+	recordOpsEvents(c, modelName, "error", 0, 0, useTimeSeconds*1000, 500)
 }
 
 type RecordConsumeLogParams struct {
@@ -250,6 +252,44 @@ func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams)
 			LogQuotaData(userId, username, params.ModelName, params.Quota, common.GetTimestamp(), params.PromptTokens+params.CompletionTokens)
 		})
 	}
+	recordOpsEvents(c, params.ModelName, "consume", params.PromptTokens, params.CompletionTokens, params.UseTimeSeconds*1000, 200)
+}
+
+func recordOpsEvents(c *gin.Context, modelName, protocol string, inputTokens, outputTokens, durationMs, statusCode int) {
+	tenantID := c.GetString(string(constant.ContextKeyTenantID))
+	seatID := c.GetString(string(constant.ContextKeySeatID))
+	externalUserID := c.GetString(string(constant.ContextKeyExternalUserID))
+	if tenantID == "" {
+		return
+	}
+	cycle := time.Now().Format("2006-01")
+	requestID := c.GetString(common.RequestIdKey)
+	ipHash := common.Sha1([]byte(c.ClientIP()))
+	_ = DB.Create(&BillingEvent{
+		TenantID:     tenantID,
+		UserID:       externalUserID,
+		SeatID:       seatID,
+		RequestID:    requestID,
+		Model:        modelName,
+		Protocol:     protocol,
+		StatusCode:   statusCode,
+		InputTokens:  inputTokens,
+		OutputTokens: outputTokens,
+		DurationMs:   durationMs,
+		BillingCycle: cycle,
+	}).Error
+	_ = DB.Create(&AuditEvent{
+		TenantID:     tenantID,
+		UserID:       externalUserID,
+		SeatID:       seatID,
+		Model:        modelName,
+		Protocol:     protocol,
+		InputTokens:  inputTokens,
+		OutputTokens: outputTokens,
+		StatusCode:   statusCode,
+		DurationMs:   durationMs,
+		ClientIPHash: ipHash,
+	}).Error
 }
 
 type RecordTaskBillingLogParams struct {

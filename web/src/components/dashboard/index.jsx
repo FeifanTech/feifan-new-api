@@ -182,6 +182,37 @@ const Dashboard = () => {
         CHART_CONFIG={CHART_CONFIG}
       />
 
+      {dashboardData.isAdminUser && dashboardData.opsOverview && (
+        <div className='mb-4 grid grid-cols-1 lg:grid-cols-4 gap-4'>
+          <div className='semi-card semi-card-bordered p-4'>
+            <div className='text-xs text-gray-500'>{dashboardData.t('租户数')}</div>
+            <div className='text-2xl font-semibold mt-2'>
+              {dashboardData.opsOverview.tenant_count || 0}
+            </div>
+          </div>
+          <div className='semi-card semi-card-bordered p-4'>
+            <div className='text-xs text-gray-500'>{dashboardData.t('Seat 总量')}</div>
+            <div className='text-2xl font-semibold mt-2'>
+              {dashboardData.opsOverview.seat_count || 0}
+            </div>
+          </div>
+          <div className='semi-card semi-card-bordered p-4'>
+            <div className='text-xs text-gray-500'>{dashboardData.t('活跃 Seat')}</div>
+            <div className='text-2xl font-semibold mt-2'>
+              {dashboardData.opsOverview.active_seat_count || 0}
+            </div>
+          </div>
+          <div className='semi-card semi-card-bordered p-4'>
+            <div className='text-xs text-gray-500'>
+              {dashboardData.t('Copilot 渠道数')}
+            </div>
+            <div className='text-2xl font-semibold mt-2'>
+              {dashboardData.opsOverview.copilot_channel_count || 0}
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* API信息和图表面板 */}
       <div className='mb-4'>
         <div

@@ -16,6 +16,7 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/service/seat"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/QuantumNous/new-api/types"
 
@@ -381,6 +382,24 @@ func SetupContextForSelectedChannel(c *gin.Context, channel *model.Channel, mode
 	// c.Request.Header.Set("Authorization", fmt.Sprintf("Bearer %s", key))
 	common.SetContextKey(c, constant.ContextKeyChannelKey, key)
 	common.SetContextKey(c, constant.ContextKeyChannelBaseUrl, channel.GetBaseURL())
+
+	if channel.Type == constant.ChannelTypeGitHubCopilot {
+		tenantID := common.GetContextKeyString(c, constant.ContextKeyTenantID)
+		externalUserID := common.GetContextKeyString(c, constant.ContextKeyExternalUserID)
+		if tenantID != "" && externalUserID != "" {
+			if binding, githubToken, err := seat.ResolveGitHubToken(tenantID, externalUserID); err == nil {
+				common.SetContextKey(c, constant.ContextKeyChannelKey, githubToken)
+				common.SetContextKey(c, constant.ContextKeySeatID, binding.SeatID)
+				binding.TouchLastUsed()
+				switch binding.AccountType {
+				case "business":
+					common.SetContextKey(c, constant.ContextKeyChannelBaseUrl, "https://api.business.githubcopilot.com")
+				case "enterprise":
+					common.SetContextKey(c, constant.ContextKeyChannelBaseUrl, "https://api.enterprise.githubcopilot.com")
+				}
+			}
+		}
+	}
 
 	common.SetContextKey(c, constant.ContextKeySystemPromptOverride, false)
 
