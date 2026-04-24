@@ -307,137 +307,274 @@ SELECT tablename FROM pg_tables WHERE tablename IN ('tenants','seat_bindings','b
 
 ## 6. 人工测试用例
 
-以下每条都建议记录：请求参数、响应体、日志截图、数据库核对结果。
+本节改为“照抄就能执行”的详细版。每个用例都包含：前置条件、命令示例、通过标准、失败排查。  
+建议先准备一个测试终端并设置以下变量（替换成你的实际值）：
+
+```bash
+export BASE_URL="http://127.0.0.1:3000"
+export USER_KEY="sk-替换为你的用户token"
+export TENANT_ID="tenant-a"
+export EXTERNAL_USER_ID="u-a1"
+```
+
+通用请求头（后续命令默认使用）：
+```bash
+-H "Authorization: Bearer ${USER_KEY}" \
+-H "X-Tenant-Id: ${TENANT_ID}" \
+-H "X-User-Id: ${EXTERNAL_USER_ID}" \
+-H "Content-Type: application/json"
+```
 
 ### A. Copilot 渠道与鉴权（第一阶段）
 
-**A-01 渠道创建校验（GitHub Token 前缀）**
-- 步骤：在渠道管理新增 GitHubCopilot 渠道，分别输入合法/非法 key。
-- 期望：合法 key 可保存；非法 key 被拒绝并返回明确错误。
+**A-01 渠道创建校验（GitHub Token 前缀）**  
+前置条件：已登录管理员后台。  
+步骤：
+1. 进入“渠道管理” -> 新增渠道，类型选 `GitHubCopilot`。
+2. 依次尝试填入：
+   - 合法：`ghp_xxx` 或 `ghu_xxx` 或 `gho_xxx` 或 `github_pat_xxx`
+   - 非法：`abc_xxx`
+3. 点击保存。
+通过标准：
+- 合法前缀可保存成功；
+- 非法前缀被拦截并提示格式错误。
+失败排查：
+- 若合法也失败，检查后端是否为 `yunyi_feature` 分支。
 
-**A-02 OpenAI 路由可用性**
-- 步骤：`POST /v1/chat/completions`，模型 `gpt-4.1`，`stream=false`。
-- 期望：返回成功，响应结构符合 OpenAI 协议。
+**A-02 OpenAI 路由可用性**  
+命令：
+```bash
+curl -sS "${BASE_URL}/v1/chat/completions" \
+  -H "Authorization: Bearer ${USER_KEY}" \
+  -H "X-Tenant-Id: ${TENANT_ID}" \
+  -H "X-User-Id: ${EXTERNAL_USER_ID}" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model":"gpt-4.1",
+    "stream":false,
+    "messages":[{"role":"user","content":"say hello"}]
+  }'
+```
+通过标准：返回 JSON 且包含 `choices` 字段。
 
-**A-03 Anthropic 路由可用性**
-- 步骤：`POST /v1/messages`，模型 `claude-sonnet-4`，`stream=false`。
-- 期望：返回 Anthropic 协议结构，消息可正常转换。
+**A-03 Anthropic 路由可用性**  
+命令：
+```bash
+curl -sS "${BASE_URL}/v1/messages" \
+  -H "Authorization: Bearer ${USER_KEY}" \
+  -H "anthropic-version: 2023-06-01" \
+  -H "X-Tenant-Id: ${TENANT_ID}" \
+  -H "X-User-Id: ${EXTERNAL_USER_ID}" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model":"claude-sonnet-4",
+    "max_tokens":256,
+    "messages":[{"role":"user","content":"hello"}]
+  }'
+```
+通过标准：返回 Anthropic 协议结构（含 `id` / `content` / `model`）。
 
-**A-04 Embedding 可用性**
-- 步骤：`POST /v1/embeddings`。
-- 期望：返回 embedding 数据；无协议转换报错。
+**A-04 Embedding 可用性**  
+命令：
+```bash
+curl -sS "${BASE_URL}/v1/embeddings" \
+  -H "Authorization: Bearer ${USER_KEY}" \
+  -H "X-Tenant-Id: ${TENANT_ID}" \
+  -H "X-User-Id: ${EXTERNAL_USER_ID}" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"text-embedding-3-small","input":"hello"}'
+```
+通过标准：返回 `data[0].embedding` 数组。
 
-**A-05 动态模型列表**
-- 步骤：`GET /v1/models`。
-- 期望：返回 Copilot 上游模型集合；异常时记录当前行为（是否报错/是否兜底）。
+**A-05 动态模型列表**  
+命令：
+```bash
+curl -sS "${BASE_URL}/v1/models" \
+  -H "Authorization: Bearer ${USER_KEY}"
+```
+通过标准：返回 `data` 数组且至少有 1 个模型。
 
 ---
 
 ### B. Token Exchange 与 Header 行为（第一阶段）
 
-**B-01 Token Exchange 成功链路**
-- 步骤：首次请求触发 exchange；重复请求命中缓存。
-- 期望：首次耗时较高，后续请求明显降低；业务请求成功。
+**B-01 Token Exchange + 缓存命中**  
+步骤：
+1. 重启服务（确保缓存清空）。
+2. 连续执行 A-02 两次，记录两次耗时（终端可用 `time`）。
+通过标准：第二次通常明显更快，且都成功。
 
-**B-02 Base URL 动态解析**
-- 步骤：验证 individual/business/enterprise 账号类型下请求路由。
-- 期望：下游目标域名符合预期（`api.githubcopilot.com` / `api.business...` / `api.enterprise...`）。
+**B-02 Base URL 动态解析**  
+步骤：
+1. 绑定 Seat 时分别设置 `account_type=individual/business/enterprise`。
+2. 分别执行 A-02。
+通过标准：三种都可成功；失败时记录错误码与账号类型。
 
-**B-03 请求头注入完整性**
-- 步骤：抓包/代理查看下游请求头。
-- 期望：含 `editor-version`、`editor-plugin-version`、`x-request-id`、`x-vscode-user-agent-library-version` 等关键头。
+**B-03 Header 注入完整性（建议抓包）**  
+步骤：
+1. 使用 mitmproxy 或网关出口抓包（仅测试环境）。
+2. 执行 A-02。
+通过标准：下游请求存在关键头：
+- `editor-version`
+- `editor-plugin-version`
+- `x-request-id`
+- `x-vscode-user-agent-library-version`
 
-**B-04 X-Initiator / vision 标识**
-- 步骤：发送含 assistant/tool 历史与 image 内容的请求。
-- 期望：`X-Initiator=agent`；图像请求带 `copilot-vision-request=true`。
+**B-04 `X-Initiator` / `copilot-vision-request`**  
+步骤：
+1. 构造包含 assistant/tool 历史或 image_url 的请求。
+2. 抓包观察下游头。
+通过标准：出现 `X-Initiator=agent`；含图像时 `copilot-vision-request=true`。
 
 ---
 
-### C. 模型行为与参数处理（第一阶段）
+### C. 模型与参数行为（第一阶段）
 
-**C-01 Claude 模型规范化**
-- 步骤：请求模型 `claude-sonnet-4-5`。
-- 期望：下游使用规范化模型名 `claude-sonnet-4`，请求成功。
+**C-01 Claude 模型规范化**  
+命令：
+```bash
+curl -sS "${BASE_URL}/v1/chat/completions" \
+  -H "Authorization: Bearer ${USER_KEY}" \
+  -H "X-Tenant-Id: ${TENANT_ID}" \
+  -H "X-User-Id: ${EXTERNAL_USER_ID}" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"claude-sonnet-4-5","messages":[{"role":"user","content":"hi"}]}'
+```
+通过标准：请求成功（说明规范化生效）。
 
-**C-02 max_tokens 自动补齐**
-- 步骤：不传 `max_tokens` 发起请求。
-- 期望：可正常请求；根据模型能力自动填充（无能力数据时 fallback）。
+**C-02 `max_tokens` 自动补齐**  
+步骤：执行 C-01，但不传 `max_tokens`。  
+通过标准：请求成功，无 `max_tokens required` 类报错。
 
 ---
 
 ### D. Seat/Tenant 绑定与分配（D-03/D-04 第一阶段，D-01/D-02 第二阶段）
 
-**D-01 Seat 绑定接口**
-- 步骤：`POST /api/ops/seat/bind` 绑定 tenant/user/seat/github_token。
-- 期望：绑定成功，返回绑定记录；加密字段不明文回显。
+**D-01 Seat 绑定接口（第二阶段）**  
+命令（管理员会话或后台调用）：
+```bash
+curl -sS -X POST "${BASE_URL}/api/ops/seat/bind" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "tenant_id":"tenant-a",
+    "user_id":"u-a1",
+    "seat_id":"seat-a1",
+    "github_token":"ghp_替换为真实token",
+    "account_type":"enterprise"
+  }'
+```
+通过标准：`success=true`，且返回 seat 记录。
 
-**D-02 Seat 绑定列表脱敏**
-- 步骤：`GET /api/ops/seat/bindings`。
-- 期望：返回记录，不包含明文 token。
+**D-02 Seat 列表脱敏（第二阶段）**  
+命令：
+```bash
+curl -sS "${BASE_URL}/api/ops/seat/bindings?tenant_id=tenant-a"
+```
+通过标准：返回列表中不应出现明文 GitHub token。
 
-**D-03 Header 注入映射**
-- 步骤：业务请求时带 `X-Tenant-Id`、`X-User-Id`。
-- 期望：系统能解析到对应 seat，并使用 seat 关联 GitHub token。
+**D-03 Header 注入映射（第一阶段）**  
+步骤：执行 A-02，带 `X-Tenant-Id` 与 `X-User-Id`。  
+通过标准：请求成功；若移除头后失败或走不同行为，记录差异。
 
-**D-04 无映射回退**
-- 步骤：不传 tenant/user 头，直接请求 Copilot 渠道。
-- 期望：走渠道 key 默认逻辑；若 key 不可用应有明确报错。
+**D-04 无映射回退（第一阶段）**  
+步骤：去掉 `X-Tenant-Id`、`X-User-Id` 重新执行 A-02。  
+通过标准：系统按渠道 key 回退（成功或明确错误，不能挂死）。
 
 ---
 
 ### E. 限流与降级（E-01/E-03/E-04 第一阶段，E-02 第二阶段）
 
-**E-01 Seat 并发限流**
-- 步骤：同 seat 并发压测超过阈值（默认 3）。
-- 期望：部分请求返回 `429`，错误码 `SEAT_CONCURRENT`。
+**E-01 Seat 并发限流（第一阶段）**  
+步骤：
+1. 保持同一 `tenant+user` 头。
+2. 并发发 5 个 A-02 请求（可用 Postman runner/JMeter/ab）。
+通过标准：部分请求返回 `429` 且报错含 `SEAT_CONCURRENT`。
 
-**E-02 Seat QPM 限流**
-- 步骤：同 seat 1 分钟内连续请求超阈值。
-- 期望：返回 `429`，错误码 `SEAT_QPM`。
+**E-02 Seat QPM 限流（第二阶段）**  
+步骤：1 分钟内密集发请求超过配置阈值。  
+通过标准：返回 `429` 且报错含 `SEAT_QPM`。
 
-**E-03 全局并发保护**
-- 步骤：高并发超过全局阈值。
-- 期望：返回 `503`，错误码 `GLOBAL_OVERLOAD`。
+**E-03 全局并发保护（第一阶段）**  
+步骤：多用户并发请求超过全局阈值。  
+通过标准：返回 `503` 且报错含 `GLOBAL_OVERLOAD`。
 
-**E-04 Redis 异常兜底**
-- 步骤：关闭 Redis 后重试并发请求。
-- 期望：服务不崩溃，限流逻辑退化到本地模式（容量下降但可用）。
+**E-04 Redis 异常兜底（第一阶段）**  
+步骤：
+1. 停掉 Redis（`docker stop newapi-redis`）。
+2. 重试 A-02 与 E-01。
+通过标准：服务可继续处理请求；限流仍生效（可能容量下降）。
 
 ---
 
 ### F. 账单与审计（第二阶段）
 
+先执行 5~10 次 A-02 产生数据，再执行以下查询。
+
 **F-01 账单聚合查询**
-- 步骤：调用业务请求后，`GET /api/ops/billing/statements`。
-- 期望：按 `billing_cycle + tenant_id` 聚合展示请求数与 token。
+```bash
+curl -sS "${BASE_URL}/api/ops/billing/statements?tenant_id=tenant-a"
+```
+通过标准：返回 `billing_cycle/tenant_id/request_count/input_tokens/output_tokens`。
 
 **F-02 账单 CSV 导出**
-- 步骤：`GET /api/ops/billing/statements/export`。
-- 期望：返回 CSV 文件，字段完整且内容可读。
+```bash
+curl -sS "${BASE_URL}/api/ops/billing/statements/export?tenant_id=tenant-a" -o billing.csv
+```
+通过标准：生成 `billing.csv`，首行字段完整。
 
-**F-03 审计事件查询**
-- 步骤：`GET /api/ops/audit/events?tenant_id=...`。
-- 期望：可按租户查询，返回模型/状态码/耗时/IP 哈希等元信息。
+**F-03 审计查询**
+```bash
+curl -sS "${BASE_URL}/api/ops/audit/events?tenant_id=tenant-a&limit=20"
+```
+通过标准：返回模型、状态码、耗时、IP 哈希等元信息。
 
 **F-04 审计清理**
-- 步骤：`DELETE /api/ops/audit/events?days=...`。
-- 期望：返回删除条数与 cutoff；历史数据确实减少。
+```bash
+curl -sS -X DELETE "${BASE_URL}/api/ops/audit/events?days=30"
+```
+通过标准：返回 `deleted` 数值。
 
 **F-05 Token 健康检查**
-- 步骤：`GET /api/ops/copilot/token-health`，构造有 key/空 key 渠道。
-- 期望：有 key 显示 `ok`，空 key 显示 `missing_token`。
+```bash
+curl -sS "${BASE_URL}/api/ops/copilot/token-health"
+```
+通过标准：有 key 的渠道状态为 `ok`；空 key 渠道为 `missing_token`。
 
 ---
 
 ### G. 运营看板（前端，第二阶段）
 
-**G-01 管理员概览卡片展示**
-- 步骤：管理员登录 Dashboard。
-- 期望：展示 `tenant_count`、`seat_count`、`active_seat_count`、`copilot_channel_count` 四张卡片。
+**G-01 卡片展示**
+步骤：
+1. 管理员登录 `http://localhost:3000`。
+2. 进入 Dashboard。
+通过标准：看到四张卡片：
+- 租户数
+- Seat 总量
+- 活跃 Seat
+- Copilot 渠道数
 
 **G-02 数据一致性**
-- 步骤：新增/变更 seat、tenant 后刷新看板。
-- 期望：卡片数值与数据库统计一致。
+步骤：
+1. 新增一个 seat 绑定。
+2. 刷新 Dashboard。
+通过标准：`Seat 总量/活跃 Seat` 与后台数据一致。
+
+---
+
+### H. 每条用例执行记录模板（请复制）
+
+```text
+用例编号：
+执行人：
+执行时间：
+环境（分支/commit/DB/Redis）：
+请求参数（或操作路径）：
+实际结果：
+是否通过（Pass/Fail）：
+失败截图/日志链接：
+备注：
+```
 
 ---
 
