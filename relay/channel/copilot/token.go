@@ -57,11 +57,27 @@ func isValidToken(info CopilotTokenInfo) bool {
 	return time.Until(info.ExpiresAt) > redisSafetyLeeway
 }
 
-func tokenExchangeURL() string {
-	if v := strings.TrimSpace(os.Getenv("COPILOT_TOKEN_EXCHANGE_URL")); v != "" {
-		return v
+func tokenExchangeURLs() []string {
+	if raw := strings.TrimSpace(os.Getenv("COPILOT_TOKEN_EXCHANGE_URLS")); raw != "" {
+		parts := strings.Split(raw, ",")
+		out := make([]string, 0, len(parts))
+		for _, part := range parts {
+			v := strings.TrimSpace(part)
+			if v != "" {
+				out = append(out, v)
+			}
+		}
+		if len(out) > 0 {
+			return out
+		}
 	}
-	return defaultExchangeURL
+	if v := strings.TrimSpace(os.Getenv("COPILOT_TOKEN_EXCHANGE_URL")); v != "" {
+		return []string{v}
+	}
+	return []string{
+		defaultExchangeURL,
+		"https://api.github.com/copilot_internal/token",
+	}
 }
 
 func GetEditorVersion() string {
@@ -69,6 +85,41 @@ func GetEditorVersion() string {
 		return v
 	}
 	return "vscode/1.104.3"
+}
+
+func GetEditorPluginVersion() string {
+	if v := strings.TrimSpace(os.Getenv("COPILOT_EDITOR_PLUGIN_VERSION")); v != "" {
+		return v
+	}
+	return "copilot-chat/0.45.1"
+}
+
+func GetCopilotUserAgent() string {
+	if v := strings.TrimSpace(os.Getenv("COPILOT_USER_AGENT")); v != "" {
+		return v
+	}
+	return "GitHubCopilotChat/0.45.1"
+}
+
+func GetCopilotIntegrationID() string {
+	if v := strings.TrimSpace(os.Getenv("COPILOT_INTEGRATION_ID")); v != "" {
+		return v
+	}
+	return "vscode-chat"
+}
+
+func GetCopilotOpenAIIntent() string {
+	if v := strings.TrimSpace(os.Getenv("COPILOT_OPENAI_INTENT")); v != "" {
+		return v
+	}
+	return "conversation-panel"
+}
+
+func GetCopilotGitHubAPIVersion() string {
+	if v := strings.TrimSpace(os.Getenv("COPILOT_GITHUB_API_VERSION")); v != "" {
+		return v
+	}
+	return "2025-04-01"
 }
 
 func readFromMemory(githubToken string) (CopilotTokenInfo, bool) {
@@ -139,24 +190,66 @@ func exchangeToken(ctx context.Context, githubToken string) (CopilotTokenInfo, e
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, tokenExchangeURL(), nil)
-	if err != nil {
-		return CopilotTokenInfo{}, err
+	doExchange := func(url, authHeader string) (*http.Response, []byte, error) {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+		if err != nil {
+			return nil, nil, err
+		}
+		req.Header.Set("Authorization", authHeader)
+		req.Header.Set("Accept", "application/json")
+		req.Header.Set("Editor-Version", GetEditorVersion())
+		req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+		req.Header.Set("User-Agent", "new-api-copilot-gateway")
+		client := service.GetHttpClient()
+		resp, err := client.Do(req)
+		if err != nil {
+			return nil, nil, err
+		}
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		return resp, body, nil
 	}
-	req.Header.Set("Authorization", "token "+githubToken)
-	req.Header.Set("Accept", "application/json")
-	req.Header.Set("Editor-Version", GetEditorVersion())
 
-	client := service.GetHttpClient()
-	resp, err := client.Do(req)
-	if err != nil {
-		return CopilotTokenInfo{}, err
+	var (
+		resp    *http.Response
+		body    []byte
+		err     error
+		lastURL string
+	)
+	urls := tokenExchangeURLs()
+	for _, exchangeURL := range urls {
+		lastURL = exchangeURL
+		resp, body, err = doExchange(exchangeURL, "Bearer "+githubToken)
+		if err != nil {
+			continue
+		}
+		// Fallback: some GitHub tokens are accepted only with `token` prefix.
+		if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+			if strings.EqualFold(os.Getenv("COPILOT_DEBUG"), "true") {
+				common.SysLog(fmt.Sprintf("copilot exchange got %d with Bearer on %s, retry with token prefix", resp.StatusCode, exchangeURL))
+			}
+			resp2, body2, err2 := doExchange(exchangeURL, "token "+githubToken)
+			if err2 == nil {
+				resp = resp2
+				body = body2
+			}
+		}
+		if resp.StatusCode == http.StatusOK {
+			break
+		}
+		if strings.EqualFold(os.Getenv("COPILOT_DEBUG"), "true") {
+			common.SysLog(fmt.Sprintf("copilot exchange status=%d url=%s", resp.StatusCode, exchangeURL))
+		}
 	}
-	defer resp.Body.Close()
+	if resp == nil {
+		if err != nil {
+			return CopilotTokenInfo{}, err
+		}
+		return CopilotTokenInfo{}, fmt.Errorf("copilot token exchange failed: no response")
+	}
 
-	body, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
-		return CopilotTokenInfo{}, fmt.Errorf("copilot token exchange auth failed, status=%d", resp.StatusCode)
+		return CopilotTokenInfo{}, fmt.Errorf("copilot token exchange auth failed, status=%d url=%s", resp.StatusCode, lastURL)
 	}
 	if resp.StatusCode == http.StatusTooManyRequests {
 		return CopilotTokenInfo{}, fmt.Errorf("copilot token exchange rate limited, status=429")
@@ -168,7 +261,7 @@ func exchangeToken(ctx context.Context, githubToken string) (CopilotTokenInfo, e
 		if strings.EqualFold(os.Getenv("COPILOT_DEBUG"), "true") {
 			common.SysLog(fmt.Sprintf("copilot exchange non-200 status=%d body_len=%d", resp.StatusCode, len(body)))
 		}
-		return CopilotTokenInfo{}, fmt.Errorf("copilot token exchange failed, status=%d", resp.StatusCode)
+		return CopilotTokenInfo{}, fmt.Errorf("copilot token exchange failed, status=%d url=%s", resp.StatusCode, lastURL)
 	}
 
 	data := map[string]any{}
@@ -194,7 +287,7 @@ func exchangeToken(ctx context.Context, githubToken string) (CopilotTokenInfo, e
 		baseURL = "https://api.githubcopilot.com"
 	}
 	if strings.EqualFold(os.Getenv("COPILOT_DEBUG"), "true") {
-		common.SysLog(fmt.Sprintf("copilot exchange ok refresh_in=%d base_url=%s", refreshIn, baseURL))
+		common.SysLog(fmt.Sprintf("copilot exchange ok refresh_in=%d base_url=%s keys=%v", refreshIn, baseURL, mapKeys(data)))
 	}
 	return CopilotTokenInfo{
 		AccessToken: accessToken,
@@ -202,6 +295,14 @@ func exchangeToken(ctx context.Context, githubToken string) (CopilotTokenInfo, e
 		RefreshIn:   refreshIn,
 		ExpiresAt:   time.Now().Add(time.Duration(refreshIn) * time.Second),
 	}, nil
+}
+
+func mapKeys(m map[string]any) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	return keys
 }
 
 func startRefreshLoop(githubToken string) {
@@ -244,9 +345,15 @@ func startRefreshLoop(githubToken string) {
 
 func GetCopilotAccessToken(ctx context.Context, githubToken string) (CopilotTokenInfo, error) {
 	if info, ok := readFromMemory(githubToken); ok {
+		if strings.EqualFold(os.Getenv("COPILOT_DEBUG"), "true") {
+			common.SysLog("copilot token cache hit: memory")
+		}
 		return info, nil
 	}
 	if info, ok := readFromRedis(githubToken); ok {
+		if strings.EqualFold(os.Getenv("COPILOT_DEBUG"), "true") {
+			common.SysLog("copilot token cache hit: redis")
+		}
 		writeCache(githubToken, info)
 		startRefreshLoop(githubToken)
 		return info, nil

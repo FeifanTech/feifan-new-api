@@ -256,6 +256,8 @@ func SetApiRouter(router *gin.Engine) {
 			seatBindingRoute.GET("/", controller.ListSeatBindings)
 			seatBindingRoute.POST("/", controller.CreateOrUpdateSeatBinding)
 			seatBindingRoute.DELETE("/:id", controller.DeleteSeatBinding)
+			seatBindingRoute.POST("/oauth/github/device/start", controller.StartSeatBindingGitHubDeviceOAuth)
+			seatBindingRoute.POST("/oauth/github/device/poll", controller.PollSeatBindingGitHubDeviceOAuth)
 		}
 		tokenRoute := apiRouter.Group("/token")
 		tokenRoute.Use(middleware.UserAuth())

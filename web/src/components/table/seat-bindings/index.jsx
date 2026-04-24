@@ -19,6 +19,7 @@ For commercial licensing, please contact support@quantumnous.com
 
 import React, { useEffect, useState } from 'react';
 import {
+  Banner,
   Button,
   Form,
   Input,
@@ -38,6 +39,8 @@ const SeatBindingsTable = () => {
   const [loading, setLoading] = useState(false);
   const [visible, setVisible] = useState(false);
   const [formApi, setFormApi] = useState(null);
+  const [oauthLoading, setOauthLoading] = useState(false);
+  const [oauthFlow, setOauthFlow] = useState(null);
 
   const loadData = async () => {
     setLoading(true);
@@ -63,13 +66,21 @@ const SeatBindingsTable = () => {
 
   const onCreate = async () => {
     const values = formApi?.getValues?.() || {};
-    if (!values.user_id || !values.seat_id || !values.github_token) {
+    const userId = Number(values.user_id);
+    if (!Number.isInteger(userId) || userId <= 0 || !values.seat_id || !values.github_token) {
       showError(t('user_id、seat_id、github_token 为必填'));
       return;
     }
+    const payload = {
+      ...values,
+      user_id: userId,
+      tenant_id: (values.tenant_id || '').trim(),
+      seat_id: (values.seat_id || '').trim(),
+      github_token: (values.github_token || '').trim(),
+    };
     setLoading(true);
     try {
-      const res = await API.post('/api/seat_binding', values);
+      const res = await API.post('/api/seat_binding', payload);
       const { success, message } = res.data || {};
       if (!success) {
         showError(message || t('保存 Seat 绑定失败'));
@@ -83,6 +94,68 @@ const SeatBindingsTable = () => {
       showError(e?.message || t('保存 Seat 绑定失败'));
     } finally {
       setLoading(false);
+    }
+  };
+
+  const onStartGitHubOAuth = async () => {
+    const values = formApi?.getValues?.() || {};
+    const userId = Number(values.user_id);
+    if (!Number.isInteger(userId) || userId <= 0 || !values.seat_id) {
+      showError(t('请先填写有效的 user_id 和 seat_id'));
+      return;
+    }
+    setOauthLoading(true);
+    try {
+      const res = await API.post('/api/seat_binding/oauth/github/device/start', {
+        tenant_id: (values.tenant_id || '').trim(),
+        user_id: userId,
+        seat_id: (values.seat_id || '').trim(),
+        account_type: 'github_oauth',
+      });
+      const { success, message, data: flow } = res.data || {};
+      if (!success) {
+        showError(message || t('启动 GitHub OAuth 失败'));
+        return;
+      }
+      setOauthFlow(flow);
+      showSuccess(t('已生成授权码，请在 GitHub 页面完成授权'));
+    } catch (e) {
+      showError(e?.message || t('启动 GitHub OAuth 失败'));
+    } finally {
+      setOauthLoading(false);
+    }
+  };
+
+  const onPollGitHubOAuth = async () => {
+    if (!oauthFlow?.device_code) {
+      showError(t('请先启动 GitHub OAuth'));
+      return;
+    }
+    setOauthLoading(true);
+    try {
+      const res = await API.post('/api/seat_binding/oauth/github/device/poll', {
+        device_code: oauthFlow.device_code,
+      });
+      const { success, message, data } = res.data || {};
+      if (!success) {
+        showError(message || t('轮询 GitHub OAuth 失败'));
+        return;
+      }
+      if (data?.status === 'pending' || data?.status === 'slow_down') {
+        showSuccess(t('授权尚未完成，请在 GitHub 页面确认后重试'));
+        return;
+      }
+      if (data?.status === 'bound') {
+        showSuccess(t('GitHub OAuth 绑定成功'));
+        setOauthFlow(null);
+        setVisible(false);
+        formApi?.reset?.();
+        await loadData();
+      }
+    } catch (e) {
+      showError(e?.message || t('轮询 GitHub OAuth 失败'));
+    } finally {
+      setOauthLoading(false);
     }
   };
 
@@ -145,7 +218,10 @@ const SeatBindingsTable = () => {
       <Modal
         title={t('新建 Seat 绑定')}
         visible={visible}
-        onCancel={() => setVisible(false)}
+        onCancel={() => {
+          setVisible(false);
+          setOauthFlow(null);
+        }}
         onOk={onCreate}
         okText={t('保存')}
         cancelText={t('取消')}
@@ -158,6 +234,34 @@ const SeatBindingsTable = () => {
           <Form.Input field='github_token' label='GitHub Token' mode='password' />
           <Form.Input field='account_type' label='Account Type' placeholder='individual/business/enterprise' />
         </Form>
+        <Banner
+          type='info'
+          description={t('如果你使用 Copilot Free，建议使用下方 GitHub OAuth 设备授权（无需手填 PAT）。')}
+          closeIcon={null}
+          style={{ marginTop: 12 }}
+        />
+        <Space style={{ marginTop: 8 }}>
+          <Button loading={oauthLoading} onClick={onStartGitHubOAuth}>
+            {t('启动 GitHub OAuth 绑定')}
+          </Button>
+          <Button loading={oauthLoading} type='primary' theme='solid' onClick={onPollGitHubOAuth}>
+            {t('我已授权，完成绑定')}
+          </Button>
+        </Space>
+        {oauthFlow?.verification_uri && oauthFlow?.user_code ? (
+          <Banner
+            type='warning'
+            closeIcon={null}
+            style={{ marginTop: 12 }}
+            description={
+              <div>
+                <div>{t('1) 打开链接：')}{oauthFlow.verification_uri}</div>
+                <div>{t('2) 输入用户码：')}{oauthFlow.user_code}</div>
+                <div>{t('3) 完成后点击“我已授权，完成绑定”')}</div>
+              </div>
+            }
+          />
+        ) : null}
       </Modal>
 
       <CardPro

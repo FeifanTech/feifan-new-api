@@ -1,8 +1,10 @@
 package copilot
 
 import (
+	"io"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
@@ -55,11 +57,11 @@ func (a *Adaptor) SetupRequestHeader(c *gin.Context, header *http.Header, info *
 	}
 	header.Set("Authorization", "Bearer "+copilotToken)
 	header.Set("editor-version", GetEditorVersion())
-	header.Set("editor-plugin-version", "copilot-chat/0.26.7")
-	header.Set("user-agent", "GitHubCopilotChat/0.26.7")
-	header.Set("copilot-integration-id", "vscode-chat")
-	header.Set("openai-intent", "conversation-panel")
-	header.Set("x-github-api-version", "2025-04-01")
+	header.Set("editor-plugin-version", GetEditorPluginVersion())
+	header.Set("user-agent", GetCopilotUserAgent())
+	header.Set("copilot-integration-id", GetCopilotIntegrationID())
+	header.Set("openai-intent", GetCopilotOpenAIIntent())
+	header.Set("x-github-api-version", GetCopilotGitHubAPIVersion())
 	header.Set("x-request-id", common.GetUUID())
 	return nil
 }
@@ -77,7 +79,7 @@ func (a *Adaptor) GetRequestURL(info *relaycommon.RelayInfo) (string, error) {
 	baseURL = strings.TrimRight(baseURL, "/")
 	url := requestURLByMode(baseURL, info.RelayMode)
 	if strings.EqualFold(os.Getenv("COPILOT_DEBUG"), "true") {
-		common.SysLog("copilot request url: " + url)
+		common.SysLog("copilot request url: " + url + " relay_mode=" + strconv.Itoa(info.RelayMode))
 	}
 	return url, nil
 }
@@ -104,6 +106,13 @@ func (a *Adaptor) ConvertClaudeRequest(c *gin.Context, info *relaycommon.RelayIn
 		request.Model = normalizeClaudeModel(request.Model)
 	}
 	return a.Adaptor.ConvertClaudeRequest(c, info, request)
+}
+
+func (a *Adaptor) DoRequest(c *gin.Context, info *relaycommon.RelayInfo, requestBody io.Reader) (any, error) {
+	if info.RelayMode == relayconstant.RelayModeRealtime {
+		return channel.DoWssRequest(a, c, info, requestBody)
+	}
+	return channel.DoApiRequest(a, c, info, requestBody)
 }
 
 func (a *Adaptor) GetChannelName() string {
